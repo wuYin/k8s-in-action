@@ -1,0 +1,26 @@
+apiVersion: apps/v1beta2
+kind: ReplicaSet
+metadata:
+  name: kubia-matchexpression
+spec:
+  replicas: 3
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - kubia
+          - foo
+      - key: type
+        operator: Exists
+  template:
+    metadata:
+      labels:
+        app: kubia
+        type: normal
+    spec:
+      containers:
+        - name: kubia
+          image: wuyinio/kubia
+          ports:
+          - containerPort: 8080
