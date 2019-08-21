@@ -15,4 +15,5 @@ spec:
         - name: kubia
           image: wuyinio/kubia
           ports:
-          - containerPort: 8080
+          - name: http
+            containerPort: 8080
