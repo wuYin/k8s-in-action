@@ -1,0 +1,26 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # 确保新 Pod 逐个替换旧的 Pod
+  template:
+    metadata:
+      name: kubia
+      labels:
+        app: kubia
+    spec:
+      containers:
+        - image: wuyinio/kubia:v3
+          name: nodejs
+          readinessProbe:
+            periodSeconds: 1 # 定义 HTTP Get 就绪探针每隔 1s 执行一次
+            httpGet:
+              path: /
+              port: 8080
