@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kubia
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - kubia
+          - kubia-v2
+      - key: app
+        operator: NotIn
+        values:
+          - KUBIA
+      - key: env
+        operator: Exists
+      - key: ENV
+        operator: DoesNotExist
+  template:
+    metadata:
+      labels:
+        app: kubia
+        env: env_exists
+    spec:
+      containers:
+        - name: kubia
+          image: yinzige/kubia
+          ports:
+            - protocol: TCP
+              containerPort: 8080

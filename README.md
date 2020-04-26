@@ -1,4 +1,4 @@
-## Ch2. Start
+## 2. Get Started
 
 ### 2.1 Docker 容器
 
@@ -47,6 +47,7 @@ ENTRYPOINT ["node", "app.js"] # 镜像被执行时需被执行的命令
 > kubectl get svc # 列出 services
 > kubectl get rc  # 列出 replication controller
 > minikube service kubia-http # minikube 单节点不支持 LoadBalancer 服务，需手动获取服务地址
+# kubia-http service 的 EXTERNAL_IP 一直为 PENDING 状态
 
 > kubectl scale rc kubia --replicas=5 # 修改 rc 期望的副本数，来水平伸缩应用
 > kubectl get pod kubia-1ic8j -o wide # 显示 pod 详细列
@@ -54,16 +55,15 @@ ENTRYPOINT ["node", "app.js"] # 镜像被执行时需被执行的命令
 
 
 
-## Ch3. Pod
+## 3. Pod
 
 ### 3.2 创建 Pod
 
 yaml pod 定义模块
 
-- apiVersion：k8s API 版本
-- kind：资源类型，如 Pod，Service
-- metadata：元数据。如 pod 名称、标签、注解
-- spec：规格。pod 内容的实际说明，如容器名称、卷
+- apiVersion 与 kind 资源类型。
+- metadata 元数据： pod 名称、标签、注解。
+- spec 规格内部元件信息：容器镜像名称、卷等。
 
 kubia-manual.yaml
 
@@ -78,7 +78,7 @@ spec:
       name: kubia
       ports:
         - containerPort: 8080  # pod 对外暴露的端口
-          protocol: TCP
+          protocol: TCP # supported values: "SCTP", "TCP", "UDP"
 ```
 
 ```shell
@@ -88,16 +88,20 @@ spec:
 > kubectl logs kubia-manual --previous # 查看崩溃前的上一个容器日志
 
 > minikube ssh && docker ps
-> docker logs bdb67198848d  # 登录到 pod 运行时的节点，查看日志
+> docker logs bdb67198848d  # 登录到 pod 运行时的节点 minikube，手动 docker logs 查看日志
 
-> kubectl port-forward kubia-manual 8081:8080 # 配置端口转发，将本机的 8081 转发至 pod 的 8080，可用于调试等
+> kubectl port-forward kubia-manual 9090:8080 # 配置多重端口转发，将本机的 9090 转发至 pod 的 8080，可用于调试等
+port-forward kubia-manual 9090:8080 
+Forwarding from 127.0.0.1:9090 -> 8080 
+Forwarding from [::1]:9090 -> 8080
+Handling connection for 9090 # curl 127.0.0.1:9090
 ```
 
 
 
-### 3.3 标签组织 Pod
+### 3.3 标签（label）
 
-metadata.labels 的 kv pair 标签可组织任何 k8s 资源，保存标识信息。
+基于组操作 pod 而非单个操作，metadata.labels 的 kv pair 标签可组织任何 k8s 资源，保存标识信息。
 
 ```yaml
 apiVersion: v1
@@ -111,23 +115,25 @@ spec: # ...
 ```
 
 ```shell
+# 基于 Lable 的增删改查操作
 > kubectl get pods --show-labels # 显示 labels
-> kubectl get pods -L env # 只显示指定的标签
+> kubectl get pods -L env # 只显示 env 标签
 > kubectl label pod kubia-manual env=debug # 为指定的 pod 资源添加新标签
 > kubectl label pod kubia-manual env=online --overwrite=true # 修改标签
-> kubectl label pod kubia-manual env- # 删除标签
+> kubectl label pod kubia-manual env- # - 号删除标签
 ```
 
 
 
-### 3.4 使用标签选择器
+### 3.5 标签选择器（nodeSelector）
 
-label selector 可筛选指定的  k8s 资源。
+label selector 可筛选出具有指定值的  k8s 资源。
 
 ```shell
 > kubectl get pods -l env=debug # 筛选 env 为 debug 的 pods  # get pod 与 get pods 无异
-> kubectl get pods -l '!env' # 不含 env 标签的 pods # -L 筛选并显示标签值
-> kubectl get pods -l 'env in (debug)' # in 筛选
+> kubectl get pod -l creation_method!=manual # 不等
+> kubectl get pods -l '!env' # 不含 env 标签的 pods # -l 筛选 -L 显示 # "" 双引号会转义
+> kubectl get pods -l 'env in (debug)' # in 筛选 # -l 接受整体字符串为参数
 > kubectl get pods -l 'env notin (debug,online)' # notin 筛选
 ```
 
@@ -144,21 +150,30 @@ spec:
   containers: #...
 ```
 
-### 3.5 使用注解
+可以使用 ` kubernetes.io/hostname: minikube` 的 nodeSelector 将 pod 运行在指定的物理机上（不建议）
 
-类似 label 的 kv pair 注释，但不用作标识，可以添加大量的数据块：
+
+
+### 3.6  注解（annotation）
+
+类似 label 的 kv pair 注释，但不用作标识，用作资源说明（所以才会放在 pod metadata 的第一个子节点），可添加大量的数据块：
 
 ```shell
-> kubectl annotate pod kubia-manual creator='k8s'
-> kubectl describe pod kubia-manual # 出现在 annotation
+# 增删改查和 label 操作一样
+> kubectl annotate pod kubia-gpu yinzige.com/gpu=10G
+> kubectl describe pod kubia-gpu # 出现在 metadata.annotation
 ```
 
-### 3.6 命名空间
+注：为避免标签或注解冲突，和 Java Class 使用倒序域名的方式类似，建议 key 中添加域名信息。
 
-labels 会导致资源重叠，可用 namespace 将对象分配到不同组避免。
+
+
+### 3.7 命名空间（namespace）
+
+labels 会导致资源重叠，可用 namespace 将对象分配到集群级别的隔离区域，相当于多租户的概念，以 namespace 为操作单位。
 
 ```shell
-> s # 获取所有 namespace，默认 default 下
+> kubectl get ns # 获取所有 namespace，默认 default 下
 > kubectl get pods -n kube-system # 获取指定 namespace 下的资源
 ```
 
@@ -179,24 +194,33 @@ metadata:
 spec: # ...
 ```
 
-### 3.8 移除 pod
-
 ```shell
-> kubectl delete pod -l env=debug # 删除指定标签的 pod
-> kubectl delete pod --all # 删除当前 namespace 下的所有 pod 
-> kubectl delete all --all # 删除所有类型资源的所有对象
+# 切换上下文命名空间
+> kubectl config set-context $(kubectl config current-context) --namespace custom-namespace 
 ```
 
 
 
-## Ch4. ReplicationController
+### 3.8  删除 pod
 
-### 4.1 容器存活探针 Liveness Probe
+删除原理：向 pod 所有容器进程定期发送 SIGTERM 信号，超时则发送 SIGKILL 强制终止。需在程序内部捕捉信号正确处理，如 Go 注册捕捉信号  `signal.Notify()` 后 select 监听该 channel
 
-容器的探针用于暴露给 k8s 检察容器中的应用进程是否正常。分为 3 类：
+```shell
+> kubectl delete pod -l env=debug # 删除指定标签的 pod
+> kubectl delete pod --all # 删除当前 namespace 下的所有 pod （慎用）
+> kubectl delete all --all # 删除所有类型资源的所有对象（慎用）
+```
 
-- HTTP Get：指定 IP:Port 和 Path，GET 请求的 response code 4xx / 5xx 则认为失败
-- TCP Socket：是否能建立 TCP 连接
+
+
+## 4. ReplicationController
+
+### 4.1 容器存活探针（Liveness Probe）
+
+将进程的重启监控从程序监控级别提升到 k8s 集群功能级别，使进程 OOM，死锁或死循环时能自动重启。pod 中各容器的探针用于暴露给 k8s ，来检查容器中的应用进程是否正常。分为 3 类：
+
+- HTTP Get：指定 IP:Port 和 Path，GET 请求返回 5xx 或超时则认为失败。
+- TCP Socket：是否能建立 TCP 连接。
 - Exec：在容器中执行任意命令，检查 `$?` 是否为 0
 
 ```yaml
@@ -215,9 +239,16 @@ spec:
         initialDelaySeconds: 11 # 初次探测延迟 11s
 ```
 
-注：带探针的 Pod 仅由 Worker 节点的 kubelet 负责监控并重启，整个节点崩溃将丢失所有 Pod
+存活探针原则：
 
-### 4.2 ReplicationController
+- 为检查设立子路径 `/health` ，确保无认证。
+- 保证探针返回失败时，错误发生在应用内且重启可恢复，而非应用外的组件导致的失败，那重启也没用。
+
+注：非托管 Pod 仅由 Worker 节点的 kubelet 负责通过探针监控并重启，但整个节点崩溃会丢失该 Pod
+
+
+
+### 4.2  ReplicationController
 
 RC 监控 Pod 列表并根据模板增删、迁移 Pod。分为 3 部分：
 
@@ -225,7 +256,12 @@ RC 监控 Pod 列表并根据模板增删、迁移 Pod。分为 3 部分：
 - 副本数量 replica count：指定要运行的 pod 数量
 - pod 模板 pod template：创建新的 pod 副本
 
-注：修改标签选择器，会丢失无新标签的 pod 的管理，修改模板则不影响，可手动删除新建生效。
+注：修改标签选择器，会导致 rc 不再关注之前匹配的所有 pod。修改模板则只对新 Pod 生效（如手动 delete）
+
+RC 的两个功能：
+
+- 监控：确保符合标签选择器的 Pod 以指定的副本数量运行，多了则删除，少了则按 Pod 模板创建。
+- 扩缩容：能对监控的某组 Pod 进行动态修改副本数量进行扩缩容。
 
 ```yaml
 apiVersion: v1
@@ -254,109 +290,170 @@ spec:
 > kubectl describe rc kubia # 查看 rc 详细信息如 events
 > kubectl edit rc kubia # 修改 rc 的 yaml 配置
 > kubectl scale rc kubia --replicas=5 # 扩缩容
-> kubectl delete rc kubia  --ascade=false # 删除 rc 时保留运行中的 pod
+> kubectl delete rc kubia --ascade=false # 删除 rc 时保留运行中的 pod # ascade 级联（关联删除）
 ```
 
 
 
-### 4.3 ReplicaSet
+### 4.3  ReplicaSet
 
-ReplicationController + 扩展的 label selector  = ReplicaSet
+ ReplicaSet = ReplicationController + 扩展的 label selector ，即对 pod 的 label selector 表达力更强 。
 
 RS 能通过 `selector.matchLabels` 和 `selector.matchExpressio` 来扩展对 pod label 的筛选：
 
 ```yaml
-apiVersion: apps/v1beta2
+apiVersion: apps/v1
 kind: ReplicaSet
 metadata:
-  name: kubia-matchexpression
+  name: kubia
 spec:
   replicas: 3
   selector:
-    matchExpressions: # 为 selector 添加额外的表达式
-      - key: app  
-        operator: In # 操作符：In 在标签列表中 / NotIn 不在标签列表中 / Exists 必须包含此 key / DoseNotExists 不包含 此 key
+    matchLabels: # 与 RC 一样必须完整匹配
+      app: kubia
+    matchExpressions:
+      - key: app
+        operator: In # 必须有 KEY 且 VALUE 在列表中
         values:
           - kubia
-          - foo
-      - key: type
-        operator: Exists # 只对 key 的 Exists 操作无 values
+          - kubia-v2
+      - key: app
+        operator: NotIn # 有 KEY 则不能在如下列表中
+        values:
+          - KUBIA
+      - key: env # 必须存在的 KEY，不能有 VALUE
+        operator: Exists
+      - key: ENV
+        operator: DoesNotExist # 必须不能存在的 KEY，也不能有 VALUE
   template:
     metadata:
-      labels:
+      labels: # Pod 模板的 label 必须能和 RS 的 selector 匹配上
         app: kubia
-        type: normal
+        env: env_exists
     spec:
       containers:
         - name: kubia
-          image: wuyinio/kubia
+          image: yinzige/kubia
           ports:
-          - containerPort: 8080
+            - protocol: TCP
+              containerPort: 8080
 ```
 
-### 4.4 DaemonSet
 
-DS 用于限制在所有节点或指定节点上运行一个指定的 Pod，常用于部署系统级用于如 kube-proxy
+
+### 4.4  DaemonSet
+
+- 功能：保证标签匹配的 Pod 在符合 selector 的一个节点上运行一个，没有目标 pod 数量的概念，无法 scale
+- 场景：部署系统级组件，如 Node 监控，如 kube-proxy 处理各节点网络代理等。
 
 ```yaml
-apiVersion: apps/v1beta2
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: ssd-monitor
 spec:
   selector:
     matchLabels:
-      app: ssd-monitor
+      app: ssd-monitor # 指定要控制运行的一组 Pod
   template:
     metadata:
       labels:
-        app: ssd-monitor
+        app: ssd-monitor # 被控制的 Pod 的标签
     spec:
-      nodeSelector: # 指定只在 disk: ssd 的节点上运行当前的 pod
-        disk: ssd
+      nodeSelector: # 选择 Pod 要运行的节点标签
+        disk: ssd # 注意 YAML 文件的 true 类型是布尔型，如 ssd: true 是无法被解析为 String 的
       containers:
         - name: main
-          image: wuyinio/ssd-monitor
+          image: yinzige/ssd-monitor
 ```
 
-注：DS 资源不存在扩缩容的概念，它只确保每个选中的节点运行 1 个指定的 Pod，所以 `kubectl scale ds` 报错。
-
-### 4.4 Job 与 CronJob
-
-Job 资源指定任务完成后主动关闭 Pod 为 Completed，可配置为失败后重启或不重启，可配置为并发执行。
-
-CronJob 资源会定期创建 Job 资源，Job 创建 Pod 运行，可配置 DeadlineSeconds
 
 
+### 4.5 Job
 
-## Ch5. Service
+- 功能：保证任务以指定的并发数执行指定次数，任务执行失败后按配置策略处理。
+- 场景：执行一次性任务。
 
-### 5.1 介绍服务
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job
+spec:
+  completions: 5 # 总任务数量
+  parallelism: 2 # 并发执行任务数
+  template:
+    metadata:
+      labels:
+        app: batch-job # 要执行的 pod job label
+    spec:
+      restartPolicy: OnFailure # 任务异常结束或节点异常时处理方式："Always", "OnFailure", "Never"
+      containers:
+        - name: main
+          image: yinzige/batch-job
+```
 
-由于 pod 调度后 IP 会变化，需使用 Service 服务给一组 Pod 提供不变的单一接入点（IP:Port）
+
+
+### 4.6 CronJob
+
+对标 Linux 的 crontab 的定时任务。
+
+```yaml
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: cron-batch-job
+spec:
+  schedule: "*/1 * * * *" # 每分钟运行一次
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cron-batch-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cron-batch-job
+              image: yinzige/batch-job
+```
+
+
+
+## 5. Service
+
+### 5.1 Service 内部解析
+
+#### 接入点隔离
+
+由于 pod 调度后 IP 会变化，需使用 Service 服务给一组 Pod 提供不变的单一接入点 entrypoint，即  `IP:Port`
 
 ```shell
 > kubectl expose rc kubia --type=LoadBalancer --name kubia-http # 通过服务暴露 ClusterIP pod 服务给外部访问
 ```
 
+创建名为 kubia 的 Service，将其 80 端口的请求分发给有 `app: kubia` 标签 Pod 的自定义的 http 端口上：
+
 ```yaml
 apiVersion: v1
 kind: Service
-metadata: 
+metadata:
   name: kubia
 spec:
+  sessionAffinity: ClientIP
   ports:
     - name: http
       port: 80
-      targetPort: 8080
+      targetPort: http
     - name: https
       port: 443
-      targetPort: 8443
+      targetPort: https # defined in pod template.spec.containers.ports array
   selector:
     app: kubia
 ```
 
-注：创建名为 kubia 的 Service，将其 80 端口的请求分发给有 `app: kubia` 标签 Pod 的 8080 端口上。
+设置请求亲和性：保证一个 Client 的所有请求都只会落到同一个 Pod 上：
 
 ```yaml
 apiVersion: v1
@@ -364,17 +461,21 @@ kind: Service
 metadata: 
   name: kubia-svc-session
 spec:
-  sessionAffinity: ClientIP # 指定了会话的亲和性，则每个 client 的请求会指向同一个 Pod
+  sessionAffinity: ClientIP # or None default 
   ports:
     - port: 80
       targetPort: 8080
 ```
 
-2 种服务发现：Pod 需知道服务的 IP 和 Port
 
-- 环境变量：`kubectl exec kubia-qgtmw env` 会有 SERVICE_HOST 和 SERVICE_PORT 指向服务。
 
-- DNS 发现：在 Pod 上可通过全限定域名 FQDN 访问服务：`<service_name>.<namespace>.svc.cluster.local`
+#### 服务发现
+
+客户端和 Pod 都需知道服务本身的 IP 和 Port，才能与其背后的 Pod 进行交互。
+
+- 环境变量：`kubectl exec kubia-qgtmw env` 会看到 Pod 的环境变量列出了 Pod 创建时的所有服务地址和端口，如 SVCNAME_SERVICE_HOST 和 SVCNAME_SERVICE_PORT 指向服务。
+
+- DNS 发现：Pod 上通过全限定域名 FQDN 访问服务：`<service_name>.<namespace>.svc.cluster.local`
 
   ```shell
   > kubectl exec kubia-qgtmw cat /etc/resolv.conf
@@ -383,13 +484,130 @@ spec:
   options ndots:5
   ```
 
-  在 Pod kubia-qgtmw 中可通过访问 `kubia.default.svc.cluster.local` 来访问 kubia 服务。
+  在 Pod kubia-qgtmw 中可通过访问 `kubia.default.svc.cluster.local` 来访问 kubia 服务，在 `/etc/resolv.conf` 中指明了域名解析服务器地址，以及主机名补全规则，是在 Pod 创建时候，根据 namespace 手动导入的。
 
 
 
-### 5.2 连接集群外部的服务
+### 5.2  Service 对内部解析外部
 
-TODO: 重新梳理
+集群内部的 Pod 不直连到外部的 IP:Port，而是同样定义 Service 结合外部 endpoints 做代理中间层解耦。如获取百度首页的向外解析：
+
+1.1  建立外部目标的 endpoints 资源：
+
+```yaml
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: baidu-endpoints
+  
+subsets:
+  - addresses:
+      - ip: 220.181.38.148 # baidu.com
+      - ip: 39.156.69.79
+    ports:
+      - port: 80
+```
+
+1.2  或者建立外部解析别名
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: baidu-endpoints
+spec:
+  type: ExternalName
+  externalName: www.baidu.com
+  ports:
+    - port: 80
+```
+
+2. 再建立同名的 Service 代理，标识使用上边这组 endpoints
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: baidu-endpoints
+spec:
+  ports:
+    - port: 80
+```
+
+3. 效果：在集群内部 Pod 上可透过名为 baidu-endpoints 的 Service 连接到百度首页：
+
+```shell
+# root@kubia-72sxt:/# curl 10.103.134.52
+root@kubia-72sxt:/# curl baidu-endpoints
+<html>
+<meta http-equiv="refresh" content="0;url=http://www.baidu.com/">
+</html>
+```
+
+注意 Service 类型：
+
+```shell
+> kubectl get svc                      
+NAME              TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)          AGE
+baidu-endpoints   ExternalName   <none>         www.baidu.com   80/TCP           30m
+kubernetes        ClusterIP      10.96.0.1      <none>          443/TCP          5d2h
+kubia             ClusterIP      10.96.239.1    <none>          80/TCP,443/TCP   87m
+```
+
+
+
+### 5.3  Service 对外部解析内部
+
+#### 5.3.1  NameNode
+
+原理：在集群所有节点暴露指定的端口给外部客户端，该端口会将请求转发 Service 进一步转发给能符合 label 的 Pod，即 Service 从所有节点收集指定端口的请求并分发给能处理的 Pod
+
+缺点：高可用性需由外部客户端保证，若节点下线需及时切换。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-nodeport
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30001
+  selector:
+    app: kubia
+```
+
+三个端口号，节点转发 30001，Service 转发 80：
+
+宿主机即外部，执行  `curl MINIKUBE_NODE_IP:30001` 会被转发到有 `app:kubia` 标签的 Pod 的  8080 端口。执行 `curl NAME_PORT:80` 同理。
+
+
+
+### 5.3.2  LoadBalancer
+
+K8S 集群端高可用的 NameNode 扩展。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-loadbalancer
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: kubia
+```
+
+k8s `app:kubia` 所在的所有节点打开随机端口 **32148**，进一步转发给 Pod 的 8080 端口。
+
+```
+kubia-loadbalancer   LoadBalancer   10.108.104.22   <pending>       80:32148/TCP     4s
+```
 
 
 
@@ -400,7 +618,7 @@ TODO: 重新梳理
 - 问题：Pod 中每个容器的文件系统来自镜像，相互独立。
 - 解决：使用存储卷，让容器访问外部磁盘空间、容器间共享存储。
 
-卷是 Pod 生命周期的一部分，不是 k8s 资源对象。Pod 启动时创建，删除时销毁。用于 Pod 中挂载到多个容器进行文件共享。
+卷是 Pod 生命周期的一部分，不是 k8s 资源对象。Pod 启动时创建，删除时销毁（文件可选保留）。用于 Pod 中挂载到多个容器进行文件共享。
 
 卷类型：
 
@@ -947,62 +1165,3 @@ spec:
 
 
 ## Ch10. Stateful Set
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

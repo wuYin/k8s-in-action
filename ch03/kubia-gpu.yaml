@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubia-gpu
+spec:
+  containers:
+    - image: yinzige/kubia
+      name: kubia-container-name
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+  nodeSelector:
+    gpu: "true"
+#    kubernetes.io/hostname: minikube
+
