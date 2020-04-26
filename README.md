@@ -622,7 +622,7 @@ kubia-loadbalancer   LoadBalancer   10.108.104.22   <pending>       80:32148/TCP
 
 卷类型：
 
-- emptyDir：存放临时数据的空目录。
+- emptyDir：存放临时数据的临时空目录。
 - hostPath：将 k8s worker 节点的系统文件挂载到 Pod 中，常用于单节点集群的持久化存储。
 - persistentVolumeClaim：PVC 持久卷声明，用于预配置 PV
 
@@ -637,69 +637,53 @@ metadata:
   name: fortune
 spec:
   containers:
-    - image: luksa/fortune
-      name: html-generator
+    - name: html-generator
+      image: yinzige/fortuneloop
       volumeMounts:
         - name: html
-          mountPath: /var/htdocs # 名为 html 的卷挂载到容器的 /var/htdocs 目录
-    - image: nginx:alpine
-      name: web-server
+          mountPath: /var/htdocs # 将 html 的卷挂载到 html-generator 容器的 /var/htdocs 目录
+    - name: web-server
+      image: nginx:alpine
       volumeMounts:
         - name: html
-          mountPath: /usr/share/nginx/html # 名为 html 的卷挂载到 /usr/share/nginx/html
-          readOnly: true # 设置卷为只读
-      ports:
-        - containerPort: 80
-          protocol: TCP
+          mountPath: /usr/share/nginx/html  # 将 html 的卷挂载 web-server 容器到 /usr/share/nginx/html 目录
+          readOnly: true # 设置只读
   volumes:
-    - name: html
-      emptyDir: {} # 在 Pod 中设置名为 html 的 emptyDir 卷，等待挂载
+    - name: html # 声明名为 emptyDir 的 emptyDir 卷
+      emptyDir: {}
 ```
+
+emptyDir 卷跟随 Pod 被 k8s 自动分配在宿主机指定目录：`/var/lib/kubelet/pods/PODUID/volumes/kubernetes.io~empty-dir/VOLUMENAME`
+
+如上的 html 卷位置在 minikube 节点：
+
+```shell
+$ sudo ls -l /var/lib/kubelet/pods/144c55eb-edf5-4b44-a2f6-a0d9cfe04f7c/volumes/kubernetes.io~empty-dir/html
+total 4
+-rw-r--r-- 1 root root 80 Apr 26 05:01 index.html
+```
+
+
 
 ### 6.3 hostPath 卷
 
-hostPath 卷的数据不跟随 Pod 生命周期，下一个调度至此节点的 Pod 能继续使用前一个 Pod 留下的数据。
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: mongodb
-spec:
-  volumes:
-    - name: mongodb-data
-      hostPath:
-        path: /tmp/mongodb # 使用 hostPath 节点本地文件系统来存储 mongodb 的文件
-  containers:
-    - image: mongo
-      name: mongodb
-      volumeMounts:
-        - name: mongodb-data
-          mountPath: /data/db
-      ports:
-        - containerPort: 27017
-          protocol: TCP
-```
-
-重新创建 Pod 后发现 mongodb 的数据被保留：
-
-```shell
-> use mystore;
-switched to db mystore
-> db.foo.insert({k:'v'})
-WriteResult({ "nInserted" : 1 })
-> db.foo.find()
-{ "_id" : ObjectId("5d5cd1a33251e991fc9bb9bb"), "k" : "v" }
-{ "_id" : ObjectId("5d5cd209dcc650a35b6ac406"), "k" : "v" }
-```
+hostPath 卷的数据不跟随 Pod 生命周期，下一个调度至此节点的 Pod 能继续使用前一个 Pod 留下的数据，pod 和节点是强耦合的，只适合单节点部署。
 
 
 
-### 6.5 持久化卷 PV、持久化卷声明 PVC
+### 6.5  持久化卷 PV、持久化卷声明 PVC
 
 PV 与 PVC 用于解耦 Pod 与底层存储。PV、PVC 与底层存储关系：
 
 ![](http://images.yinzige.com/2019-08-21-052202.png)
+
+流程：
+
+- 管理员向集群加入节点时准备 NFS 等存储资源（TODO ）
+- 管理员创建指定大小和访问模式的 PV
+- 用户创建需要大小的 PVC
+- K8S 寻找符合 PVC 的 PV 并绑定
+- 用户在 Pod 中通过卷引用 PVC，从而使用存储 PV 资源
 
 Admin 通过网络存储创建 PV:
 
@@ -715,7 +699,7 @@ spec:
     - ReadWriteOnce
     - ReadOnlyMany
   persistentVolumeReclaimPolicy: Retain # Cycle / Delete 标识 PV 删除后数据的处理方式
-  hostPath:
+  hostPath: # 持久卷绑定到本地的 hostPath
     path: /tmp/mongodb
 ```
 
@@ -732,7 +716,7 @@ spec:
       storage: 1Gi
   accessModes:
     - ReadWriteOnce
-  storageClassName: ""
+  storageClassName: "" # 手动绑定 PVC 到已存在的 PV，否则有值就是等待绑定到匹配的新 PV
 ```
 
 User 创建 Pod 使用 PVC：
@@ -763,17 +747,33 @@ PV 设置卷的三种访问模式：
 - ROX：ReadOnlyMany ：允许多个节点挂载只读
 - RWX：ReadWriteMany：允许多个节点挂载读写
 
-注：PV 是集群范围的，PVC 和 Pod 是命名空间范围的。
+注：PV 是集群级别的存储资源，PVC 和 Pod 是命名空间范围的。所以，在 A 命名空间的 PVC 和在 B 命名空间的 PVC 都有可能绑到同一个 PV 上。
 
-可创建 StorageClass 存储类资源，用于分类 PV，在 PV 中引用指定的 PVC
+
+
+### 6.6  动态 PV：存储类 StorageClass
+
+场景：进一步解耦 Pod 与 PVC，使 Pod 不依赖 PVC 名称，而且跨集群移植只需保证 SC 一致即可，不用管 PVC 和 PV。同时还能给不同 PV 进行归档如按硬盘属性进行分类。
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast
+provisioner: k8s.io/minikube-hostpath # 指定 SC 收到创建 PVC 请求时应调用哪个组件进行处理并返回 PV
+parameters:
+  type: pd-ssd
+```
+
+
+
+总流程：可创建 StorageClass 存储类资源，用于分类 PV，在  PVC 中绑定到符合条件的 PV 上。
 
 ![](http://images.yinzige.com/2019-08-21-054515.png)
 
 
 
-
-
-## Ch7. ConfigMap 与 Secret
+## 7.  配置传递：ConfigMap 与 Secret
 
 ### 7.1 配置容器化应用程序
 

@@ -8,12 +8,13 @@ spec:
       image: yinzige/fortuneloop
       volumeMounts:
         - name: html
-          mountPath: /var/www
+          mountPath: /var/htdocs # 将 html 的卷挂载到 html-generator 容器的 /var/htdocs 目录
     - name: web-server
       image: nginx:alpine
       volumeMounts:
         - name: html
-          mountPath: /usr/share/nginx/html
+          mountPath: /usr/share/nginx/html  # 将 html 的卷挂载 web-server 容器到 /usr/share/nginx/html 目录
+          readOnly: true
   volumes:
-    - name: html
+    - name: html # 声明名为 emptyDir 的 emptyDir 卷
       emptyDir: {}
