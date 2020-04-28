@@ -560,7 +560,9 @@ kubia             ClusterIP      10.96.239.1    <none>          80/TCP,443/TCP  
 
 #### 5.3.1  NameNode
 
-原理：在集群所有节点暴露指定的端口给外部客户端，该端口会将请求转发 Service 进一步转发给能符合 label 的 Pod，即 Service 从所有节点收集指定端口的请求并分发给能处理的 Pod
+使用：外部客户端直连宿主机端口访问服务。
+
+原理：在集群所有节点暴露指定的端口给外部客户端，该端口会将请求转发 Service 进一步转发给节点上符合 label 的 Pod，即 Service 从所有节点收集指定端口的请求并分发给能处理的 Pod
 
 缺点：高可用性需由外部客户端保证，若节点下线需及时切换。
 
@@ -587,7 +589,7 @@ spec:
 
 ### 5.3.2  LoadBalancer
 
-K8S 集群端高可用的 NameNode 扩展。
+场景：外部客户端直连 LB 访问服务。其是 K8S 集群端高可用的 NameNode 扩展。
 
 ```yaml
 apiVersion: v1
@@ -607,6 +609,39 @@ k8s `app:kubia` 所在的所有节点打开随机端口 **32148**，进一步转
 
 ```
 kubia-loadbalancer   LoadBalancer   10.108.104.22   <pending>       80:32148/TCP     4s
+```
+
+
+
+### 5.4  Ingress
+
+顶级转发代理资源，仅通过一个 IP 即可代理转发后端多个 Service 的请求。需要开启 nginx controller 功能
+
+```yaml
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+    - host: "kubia.example.com"
+      http:
+        paths:
+          - path: /kubia # 将 /kubia 子路径请求转发到 kubia-nodeport 服务的 80 端口
+            backend:
+              serviceName: kubia-nodeport
+              servicePort: 80
+          - path: /user # 可配置多个 path 对应到 service
+            backend:
+              serviceName: user-svc
+              servicePort: 90
+    - host: "new.example.com" # 可配置多个 host
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: gooele
+              servicePort: 8080
 ```
 
 
@@ -794,7 +829,7 @@ ENTRYPOINT ["/bin/fortuneloop.sh"] # 在脚本中通过 $1 获取 CMD 第一个�
 CMD ["10", "11"]
 ```
 
-二者等同于 Pod 中的 `command` 和 `args`
+二者等同于 Pod 中的 `command` 和 `args`，但 pod 可通过 image 的 command 和 args 子标签进行覆盖，注意参数必须是字符串：
 
 ```yaml
 apiVersion: v1
@@ -808,11 +843,9 @@ spec:
 # ...
 ```
 
-注：args 中的数字必须用 `""` 界定，字符串反而不用。
-
 ### 7.3 为容器设置环境变量
 
-在 Pod 配置容器部分 `spec.containers.env` 指定即可：
+只能在各容器级别注入环境变量，而非 Pod 级别。配置容器部分 `spec.containers.env` 指定即可：
 
 ```yaml
 apiVersion: v1
@@ -823,126 +856,173 @@ spec:
   containers:
     - image: luksa/fortune:env
       env:
-        - name: INTERVAL # 对应到镜像 fortune 中的 $INTERVAL
+        - name: INTERVAL # 对应到容器 html-generator 中的 $INTERVAL
           value: "5"
+        - name: "NESTED_VAR"
+          value: "$(INTERVAL)_1" # 可引用其他环境变量          
       name: html-generator
 # ...      
 ```
 
-缺点：多个环境下无法复用 Pod 定义，需将配置项解耦。
+缺点：硬编码环境变量可能在多个环境下值不同无法复用，需将配置项解耦。
 
-### 7.4 ConfigMap
+### 7.4 ConfigMap 卷
+
+存储非敏感信息的文本配置文件。
 
 ```shell
-# 可从 kv 字面量、独立文件、目录下所有文件创建 cm
+# 创建 cm 的四种方式：可从 kv 字面量、配置文件、有命名配置文件、目录下所有配置文件
 > kubectl create configmap fortune-config --from-literal=sleep-interval=25 # 从 kv 字面量创建 cm
 > kubectl create configmap fortune-config --from-file=nginx-conf=my-nginx-config.conf # 指定 k 的文件创建 cm
 ```
 
 两种方式将 cm 中的值传递给 Pod 中的容器：
 
-- 设置环境变量或命令行参数
-
-  ```yaml
-  apiVersion: v1
-  kind: Pod
-  metadata:
-    name: fortune-env-from-configmap
-  spec:
-    containers:
-      - image: luksa/fortune:env
-        name: html-generator
-        env:
-          - name: INTERVAL # 为 html-generator 容器设置环境变量，值取 CM fortune-config 中的 sleep-interval 值
-            valueFrom:
-              configMapKeyRef:
-                name: fortune-config
-                key: sleep-interval 
-  # ...
-  ```
-
-  可使用 `kubectl get cm fortune-config -o yaml` 查看 CM 的配置项。
-
-- 使用 CM 将配置暴露为文件（配置项长），创建 Pod 时挂载 CM 配置项作为文件：
-
-  ```yaml
-  apiVersion: v1
-  kind: Pod
-  metadata:
-    name: fortune-configmap-volume
-  spec:
-    volumes:
-      - name: html
-        emptyDir: {} 
-      - name: config
-        configMap:
-          name: fortune-config # 使用指定名字的 cm 卷
-    containers:
-      - image: nginx:alpine 
-        name: web-server
-        volumeMounts:
-          - name: config
-            mountPath: /etc/nginx/conf.d # 将 CM fortune-config 所有配置项挂载至此目录下
-            readOnly: true
-  # ...          
-  ```
-
-  注：可添加 `items` 来挂载单一文件，`subPath` 来挂载至某一文件或文件夹而不隐藏容器的原有文件。
-
-使用 `kubectl edit cm fortune-config` 修 CM 后，容器中对应挂载的配置项会自动修改，但应用程序不会自动重新加载。
-
-
-
-### 7.5 Secret
-
-存储敏感的配置数据，其配置条目会以 Base64 编码二进制后存储：
-
-```shell
-> kubectl create secret generic fortune-https --from-file=fortune-https
-```
+#### 7.4.1  设置环境变量或命令行参数
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: fortune-https
+  name: fortune-env-from-configmap
 spec:
-  volumes:
-    - name: certs
-      secret:
-        secretName: fortune-https # 声明卷
-# ...        
   containers:
-    - image: nginx:alpine
-      name: web-server
-      volumeMounts:
-        - name: config
-          mountPath: /etc/nginx/conf.d
-          readOnly: true
-        - name: certs
-          mountPath: /etc/nginx/certs/ # 将 secret 卷挂载到指定位置
-          readOnly: true
-      ports:
-        - containerPort: 80
-        - containerPort: 443
+    - image: luksa/fortune:env
+      name: html-generator
+      env:
+        - name: INTERVAL # 取 CM fortune-config 中的 sleep-interval，作为 html-generator 容器环境变量 INTERVAL 的值
+          valueFrom:
+            configMapKeyRef:
+              name: fortune-config-cm
+              key: sleep-interval 
+      envFrom: # 批量导入 cm 的所有 kv 作为环境变量，并加上前缀
+        - prefix: CONF_
+          configMapRef:
+            name: fortune-config-cm              
 # ...
 ```
 
-对应到 nginx 的配置：
+可使用 `kubectl get cm fortune-config -o yaml` 查看 CM 的 data 配置项。
 
-```nginx
-server {
-  listen 443;
-	server_name demo.com;
-	ssl_certificate certs/https.cert;
-	ssl_certificate_key certs/https.key; # 使用挂载到 certs 目录下的证书文件
-	# ...
-}
+#### 7.4.2  配置 ConfigMap 卷
+
+当配置项过长需放入配置文件时，可将配置文件暴露为 cm 并用卷引用，从而在各容器内部挂载读取。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune-configmap-volume
+spec:
+  containers:
+    - name: html-generator
+      image: yinzige/fortuneloop:env
+      env:
+        - name: INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              key: sleep-interval # raw key file name
+              name: fortune-config # cm name
+      volumeMounts:
+        - mountPath: /var/htdocs
+          name: html
+    - name: web-server
+      image: nginx:alpine
+      volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: html
+          readOnly: true
+        - mountPath: /etc/nginx/conf.d/gzip_in.conf
+          name: config
+          subPath: gzip.conf # 使用 subPath 只挂载部分卷 gzip.conf 到指定目录下指定文件 gzip_in.conf
+          readOnly: true
+      ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+  volumes:
+    - name: html
+      emptyDir: {}
+    - name: config
+      configMap:
+        name: fortune-config # cm name
+        defaultMode: 0666 # 设置卷文件读写权限
+        items: # 使用 items 限制从 cm 暴露给卷的文件
+          - key: my-nginx-config.conf
+            path: gzip.conf # 把 key 文件的值 copy 一份到新文件中
+
+```
+
+添加 `items` 来暴露指定的文件到卷中，`subPath` 用来挂载部分卷，而不隐藏容器目录原有的初始文件。
+
+```shell
+> kubectl exec fortune-configmap-volume -c web-server -it -- ls -lA /etc/nginx/conf.d
+total 8
+-rw-r--r--    1 root     root          1093 Apr 14 14:46 default.conf # subPath
+-rw-rw-rw-    1 root     root           242 Apr 27 16:49 gzip_in.conf
+```
+
+#### 7.4.3  ConfigMap 场景
+
+使用 `kubectl edit cm fortune-config` 修后，容器中对应挂载的卷文件会延迟将修改同步。问题：若 pod 应用不支持配置文件的热更新，那同步了的修改并不会再旧 pod 生效，反而新起的 pod 会生效，造成新旧配置共存的问题。
+
+场景：cm 的特性是不变性，若 pod 应用本身支持热更新，则可修改 cm 动态更新，但注意有 k8s 的监听延迟。
+
+
+
+### 7.5 Secret
+
+存储敏感的配置数据，大小限制 1MB，其配置条目会以 Base64 编码二进制后存储：
+
+```shell
+> kubectl create secret generic fortune-auth --from-file=fortune-auth/ # password.txt
+```
+
+在 pod 中加载：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune-with-serect
+spec:
+  containers:
+    - name: fortune-auth-main
+      image: yinzige/fortuneloop
+      volumeMounts:
+        - mountPath: /tmp/no_password.txt
+          subPath: password.txt
+          name: auth
+  volumes:
+    - name: auth
+      secret:
+        secretName: fortune-auth
+```
+
+读取正常：
+
+```shell
+> kubectl exec fortune-with-serect -it -- ls -lh /tmp            
+total 4.0K
+-rw-r--r-- 1 root root 10 Apr 27 17:51 no_password.txt
+> kubectl exec fortune-with-serect -it -- mount | grep password
+tmpfs on /tmp/no_password.txt type tmpfs (ro,relatime) # secret 仅存储在内存中
+```
+
+secret 可用于从镜像仓库中拉取 private 镜像，需配置专用的 secret 使用：
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  imagePullSecrets:
+    - name: dockerhub-secret
+  containers: # ...
 ```
 
 
 
-## Ch8. Pod Metadata 与 k8s API
+## 8. Pod Metadata 与 k8s API
 
 场景：从 Pod 中的容器应用进程访问 Pod 元数据及其他资源。
 
