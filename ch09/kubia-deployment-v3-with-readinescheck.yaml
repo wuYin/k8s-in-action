@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  minReadySeconds: 10 # 新 Pod 就绪需等待 10s，才能继续滚动升级
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1 # 只允许最多超出一个非预期 pod，即只能逐个更新
+      maxUnavailable: 0 # 不允许有不可用的 Pod，以确保新 Pod 能逐个替换旧的 Pod
+  template:
+    metadata:
+      name: kubia
+      labels:
+        app: kubia
+    spec:
+      containers:
+        - name: nodejs
+          image: yinzige/kubia:v3 # 接收请求 5s 后返回 500
+          readinessProbe:
+            periodSeconds: 1 # 定义 HTTP Get 就绪探针每隔 1s 执行一次
+            httpGet:
+              port: 8080
+              path: /
+  selector:
+    matchLabels:
+      app: kubia

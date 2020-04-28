@@ -646,6 +646,72 @@ spec:
 
 
 
+### 5.5 就绪探针
+
+场景：pod 启动后并非立刻就绪，需延迟接收来自 service 的请求。若不定义就绪探针，pod 启动就会暴露给 service 使用，所以需像存活探针一样添加指定类型的就绪探针：
+
+```yaml
+#...
+    spec:
+      containers:
+        - name: kubia-container
+          image: yinzige/kubia
+          readinessProbe:
+            exec:
+              command:
+                - ls
+                - /var/ready_now
+```
+
+
+
+### 5.6  headless
+
+场景：向客户端暴露所有 pod 的 IP，将 ClusterIP 置为 None 即可：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-headless
+spec:
+  clusterIP: None
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: kubia
+```
+
+k8s 不会为 headless 服务分配 IP，通过 DNS 可直接发现后端的所有 Pod
+
+```shell
+> kubectl get svc                       
+NAME             TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE
+kubia            LoadBalancer   10.104.138.112   <pending>     80:32110/TCP   123m
+kubia-headless   ClusterIP      None             <none>        80/TCP         10m
+
+root@dnsutils:/# nslookup kubia-headless
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.6
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.12
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.10
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.8
+
+root@dnsutils:/# nslookup kubia
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   kubia.default.svc.cluster.local
+Address: 10.104.138.112
+```
+
 ## Ch6. Volume
 
 ### 6.1 卷介绍
@@ -1032,79 +1098,137 @@ spec:
 
 解决：Downward API 通过环境变量、downward API 卷来传递 Pod 的元数据。如：Pod 名称、IP、命名空间、标签、节点名、每个容器的 CPU、内存限制及其使用量。
 
-- 通过环境变量
+#### 8.1.1  环境变量透传
 
-  ```yaml
-  apiVersion: v1
-  kind: Pod
-  metadata:
-    name: downward
-  spec:
-    containers:
-      - image: busybox
-        command: ["sleep", "99999"]
-        resources:
-          requests:
-            cpu: 15m
-            memory: 100Ki
-          limits: #...
-        env:
-          - name: POD_IP
-            valueFrom: 
-              fieldRef:
-                fieldPath: status.podIP # 直接引用 pod manifest 元数据的字段，而非具体值
-          - name: CONTAINER_CPU_REQUEST_MILLICORES
-            valueFrom:
-              resourceFieldRef: # 引用容器级别的数据，如请求的 CPU、内存用量等需引用 resourceFieldRef
-                resource: requests.cpu
-                divisor: 1m # 设置资源单位
-  ```
+在 Pod 定义中手动将容器需要的元数据，以环境变量的形式手动透传给容器：
 
-- 通过 downwardAPI 卷
-
-  ```yaml
-  apiVersion: v1
-  kind: Pod
-  metadata:
-    name: downward
-    labels:
-      foo: bar
-    annotations:
-      k1: v1
-  spec:
-    containers:
-      - name: main
-        # ...
-        volumeMounts:
-          - name: downward
-            mountPath: /etc/downward
-    volumes:
-      - name: downward # 定义一个名为 downward 的 DownwardAPI 卷，将元数据写入 items 下指定路径的文件中
-        downwardAPI:
-          items:
-          - path: "podName" # "namespace"
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: downward
+spec:
+  containers:
+    - name: main
+      image: busybox
+      command:
+        - "sleep"
+        - "1000"
+      env:
+        - name: E_POD_NAMESPACE
+          valueFrom:
             fieldRef:
-              fieldPath: metadata.name
-          - path: "labels" # "annotations" # pod 的标签和注解必须使用 downwardAPI 卷去访问
+              fieldPath: metadata.namespace
+        - name: E_POD_IP
+          valueFrom:
             fieldRef:
-              fieldPath: metadata.labels
-  ```
+              fieldPath: status.podIP # 运行时元数据
+        - name: E_REQ_CPU
+          valueFrom:
+            resourceFieldRef: # 引用容器级别的数据，如请求的 CPU、内存用量等需引用 resourceFieldRef
+              resource: requests.cpu
+              divisor: 1m # 资源单位
+        - name: E_LIMIT_MEM
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+              divisor: 1Ki
+```
+
+效果：
+
+```shell
+k exec downward -it -- env | grep -e "^E_"
+E_POD_NAMESPACE=default
+E_POD_IP=172.17.0.8
+E_REQ_CPU=0
+E_LIMIT_MEM=2085844
+```
+
+缺点：无法通过环境传递 pod 标签和注解等可在运行时动态修改的元数据。
+
+```shell
+ERROR: error converting fieldPath: field label not supported: metadata.lebels.app
+```
 
 
 
-### 8.2 与 k8s API 交互
+#### 8.1.2  通过 downwardAPI 卷
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: downward
+  labels:
+    foo: bar
+  annotations:
+    k1: v1
+spec:
+  containers:
+    - name: main
+      # ...
+      volumeMounts:
+        - name: downward
+          mountPath: /etc/downward
+  volumes:
+    - name: downward # 定义一个名为 downward 的 DownwardAPI 卷，将元数据写入 items 下指定路径的文件中
+      downwardAPI:
+        items:
+        - path: "container_request_memory"
+          resourceFieldRef:
+            containerName: main # 容器级别的元数据需指定容器名
+            resource: requests.cpu
+            divisor: 1m
+        divisor: 1m
+        - path: "labels" # "annotations" # pod 的标签和注解必须使用 downwardAPI 卷去访问
+          fieldRef:
+            fieldPath: metadata.labels
+```
+
+效果：k8s 会自动地将 pod 的标签和注解同步到 downward API 卷的指定文件中。
+
+```shell
+> kubectl exec downward-volume-pod -it -- ls /etc/downward
+container_request_memory  pod_annotations           pod_labels
+
+> kubectl exec downward-volume-pod -it -- cat /etc/downward/pod_annotations
+key1="VALUE1"
+key2="VALUE2\nVALUE20\nVALUE200\n"
+kubernetes.io/config.seen="2020-04-28T04:15:29.722938998Z"
+kubernetes.io/config.source="api"
+
+> kubectl annotate pod downward-volume-pod new_key=NEW_VALUE               
+pod/downward-volume-pod annotated
+
+> kubectl exec downward-volume-pod -it -- tail -2 /etc/downward/pod_annotations
+kubernetes.io/config.source="api"
+new_key="NEW_VALUE"
+```
+
+
+
+### 8.2  与 k8s API 交互
 
 问题：downward API 只能向应用暴露 1 个 Pod 的部分元数据，无法提供其他 Pod 和其他资源信息。
 
-解决：通过 kubectl proxy 中间请求转发代理、从 Pod 内验证 Secret 证书的方式来交互。
+请求  k8s API：
+
+- 外部：通过 kubectl proxy 中间请求转发代理。
+- 内部：从 Pod 内验证 Secret 卷的 crt 证书、传递 token 到来对本 namespace 内的资源进行操作。
 
 Pod 与 API 服务器交互流程：
 
 - 应用通过 secret 卷下的 `ca.crt` 验证 API 地址
 - 应用带上 TOKEN 授权
-- 操作 pod 所在命名空间内的对象
+- 操作 pod 所在命名空间内的资源
 
 ```shell
+> ls /var/run/secrets/kubernetes.io/serviceaccount/
+ca.crt  # 验证 API 服务器证书，避免中间人攻击
+namespace # 获取本地 pod 的 namespace: default
+token # 通过 header 添加 "Authorization: Bearer $TOKEN" 方式来获取授权
+
 > curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes # 验证 API 地址
 > export CURL_CA_BUNDLE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
@@ -1112,28 +1236,30 @@ Pod 与 API 服务器交互流程：
 > curl -H "Authorization: Bearer $TOKEN" https://kubernetes # 授权
 
 > NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-> curl -H "Authorization: Bearer $TOKEN" https://kubernetes/api/v1/namespaces/$NS/pods # API 交互
+> curl -H "Authorization: Bearer $TOKEN" https://kubernetes/api/v1/namespaces/$NS/pods # 操作本地命名空间资源
 ```
 
+折中的 Pod 内部公共透明代理模式：在 pod 内部通过 ambassador 公共容器简化 API 服务器验证流程。普通容器走 HTTP 到 ambassador 容器，后者走 secret 流程走 HTTPS 与 k8s API 交互。
 
 
-## Ch9. Deployment
 
-场景：零停机升级应用。
+## 9. Deployment
 
-### 9.1 更新运行在 Pod 内的应用程序
+场景：定义比例滚动升级，出错自动回滚。
+
+### 9.1  纯手动更新运行在 Pod 内的应用程序
 
 版本升级方式：
 
-- 删除所有旧 Pod，创建新 Pod：存在不可用间隔。
+- 先删旧 Pod，再自动创建新 Pod：存在不可用间隔。
 
-  修改 Pod spec.template 中的标签选择器，选择新版 tag 对应的应用。手动 delete 旧版后自动创建新版。
+  修改 Pod spec.template 中的标签选择器，选择新版 tag 对应的应用，先手动删除旧版本，RS 自动创建新版容器。
 
-- 逐步创建新 Pod，逐步删除旧 Pod：需两个版本应用都能对外服务。
+- 创建新 Pod，同时逐步剔除旧 Pod：需两个版本应用都能对外服务，短时间内 Pod 数量翻倍。
 
-  短时间内需两倍 Pod 数量，后修改 Service 蓝绿部署将流量切换到新 Pod 上。
+  修改 Service 的 pod selector 蓝绿部署进度可控地将流量切换到新 Pod 上。
 
-### 9.2 基于 RC 的滚动升级
+### 9.2  基于 RC 的滚动升级
 
 问题：手动脚本将旧 Pod 缩容，新 Pod 扩容，易出错。
 
@@ -1141,21 +1267,25 @@ Pod 与 API 服务器交互流程：
 
 ```shell
 # 指定需更新的 RC kubia-v1，用指定的 image 创建的新 RC 来替换
-> kubectl rolling-update kubia-v1 kubia-v2 --image=wuyinio/kubia:v2 
+> kubectl rolling-update kubia-v1 kubia-v2 --image=wuyinio/kubia:v2  # 从 1.8 已移除
 ```
 
-过程：kubectl 为新旧 Pod、新旧 RC 添加 deployment 标签，并向 k8s API 请求对旧 Pod 进行缩容，对新 Pod 扩容。
+过程：kubectl 为新旧 Pod、新旧 RC 添加 deployment 标签，并向 k8s API 请求对旧 Pod 进行缩容，对新 Pod 扩容，透明地将 service 的标签匹配到新 pod 上。
+
+原理：由客户端 kebectl 动态地修改两个 RC 的标签，缩容旧 Pod，扩容新 Pod，最终完成流量转移。
+
+
 
 ### 9.3 使用 Deployment 声明式升级
 
-问题：kubectl 是客户端升级，若网络断开连接则升级中断（如关闭终端），Pod 和 RC 会处于多版本混合态。
+问题：RC 滚动升级是 kubectl 客户端控制升级，若网络断开连接则升级中断（如关闭终端），Pod 和 RC 会处于多版本混合态。
 
-解决：在服务端使用高级资源 Deployment 声明来协调新旧两个 RC 的扩缩容。
+解决：在服务端使用高级资源 Deployment 声明来协调新旧两个 RS 的扩缩容，用户只定义最终目标收敛状态。
 
 deployment 也分为 3 部分：标签选择器、期望副本数、Pod 模板：
 
 ```yaml
-apiVersion: apps/v1beta1 # 属于 apps API 组
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubia
@@ -1168,8 +1298,11 @@ spec:
         app: kubia
     spec:
       containers:
-        - image: wuyinio/kubia:v1
-          name: nodejs
+        - name: nodejs
+          image: yinzige/kubia:v1
+  selector:
+    matchLabels:
+      app: kubia
 ```
 
 ```shell
@@ -1177,7 +1310,7 @@ spec:
 > kubectl create -f kubia-deployment-v1.yaml --record # record 选项将记录历史版本号，用于后续回滚
 > kubectl rollout status deployment kubia # rollout 显示部署状态
 
-# deployment 用 pod 模板的哈希值创建 RS，再由 RS 创建 Pod 并管理
+# deployment 用 pod 模板的哈希值创建 RS，再由 RS 创建 Pod 并管理，哈希值一致
 > kubectl get pods
 NAME                     READY   STATUS    RESTARTS   AGE
 kubia-5b9f8f4d84-nxmqd   1/1     Running   0          2s
@@ -1193,8 +1326,19 @@ deployment 的升级策略：`spec.stratagy`
 - RollingUpdate：渐进式删除旧 Pod。新旧版混合
 - Recreate：一次性删除所有旧 Pod，重建新 Pod。中间服务不可用
 
+#### 9.3.1  触发滚动升级
+
+先指定 Pod 就绪后的等待时间：` kubectl patch deployment kubia -p '{"spec": {"minReadySeconds": 10}}'`
+
+修改某个容器的镜像来触发升级：`kubectl set image deployment kubia nodejs=yinzige/kubia:v2`
+
+注：触发升级需真正修改到 deployment 的字段。
+
+原理：`kubectl get rs` 可看到保留了的新旧版 rs，deployment 资源在 k8s master 端会自动控制新旧 RS 的扩缩容。
+
+#### 9.3.2  回滚
+
 ```shell
-> kubectl set image deployment kubia nodejs=wuyinio/kubia:v3  # 使用 set image 修改包含指定容器的镜像，保留旧 RS
 > kubectl rollout undo deployment kubia  # 回滚到上一次 deployment 部署的版本
 > kubectl rollout history deployment kubia  # 创建 deployment 时 --record，此处显示版本
 > kubectl rollout undo deployment kubia --to-reversion=1  # 回滚到指定 REVERSION，若手动删除了 RS 则无法回滚
@@ -1202,22 +1346,24 @@ deployment 的升级策略：`spec.stratagy`
 > kubectl rollout resume deployment kubia # 恢复
 ```
 
+
+
 ### 9.4 结合探针控制升级速度
 
 可配置 `maxSurge` 和 `maxIUnavailable` 来控制升级的最大超意外的 Pod 数量、最多容忍不可用 Pod 数量。
 
 ```yaml
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubia
 spec:
   replicas: 3
-  minReadySeconds: 10 # 新 Pod 创建后需等待 10s，才能继续滚动升级
+  minReadySeconds: 10 # 新 Pod 就绪需等待 10s，才能继续滚动升级
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
+      maxSurge: 1 # 只允许最多超出一个非预期 pod，即只能逐个更新
       maxUnavailable: 0 # 不允许有不可用的 Pod，以确保新 Pod 能逐个替换旧的 Pod
   template:
     metadata:
@@ -1226,13 +1372,16 @@ spec:
         app: kubia
     spec:
       containers:
-        - image: wuyinio/kubia:v3 # v3 的 kubia 在五次 HTTP 请求后出错返回 500 
-          name: nodejs
+        - name: nodejs
+          image: yinzige/kubia:v3 # 接收请求 5s 后返回 500
           readinessProbe:
             periodSeconds: 1 # 定义 HTTP Get 就绪探针每隔 1s 执行一次
             httpGet:
-              path: /
               port: 8080
+              path: /
+  selector:
+    matchLabels:
+      app: kubia
 ```
 
 ```shell
@@ -1242,6 +1391,109 @@ spec:
 
 使用上述 deployment 从正常版 v2 升级到 bug 版 v3，据配置 v3 的第一个 Pod 会创建并在第 5s 被 Service 标记为不可用，将其从 endpoint 中移除，请求不会分发到该 v3 Pod，10s 内未就绪，最终部署自动停止。
 
+如下：kubia-54f54bf655 并未加入到 kubia Service 的 endpoints 中
+
+```yaml
+> kubectl get endpoints
+NAME             ENDPOINTS                                          AGE
+kubia            172.17.0.12:8080,172.17.0.6:8080,172.17.0.8:8080   140m
+
+> kubectl get pod -o wide                                   
+NAME                     READY   STATUS    RESTARTS   AGE     IP            NODE   NOMINATED NODE  
+kubia-54f54bf655-tgvt9   0/1     Running   0          63s     172.17.0.7    m01    <none>          
+kubia-b669c877-8kx8c     1/1     Running   0          2m17s   172.17.0.6    m01    <none>          
+kubia-b669c877-957fl     1/1     Running   0          113s    172.17.0.12   m01    <none>          
+kubia-b669c877-n7hnb     1/1     Running   0          2m4s    172.17.0.8    m01    <none>          
+```
 
 
-## Ch10. Stateful Set
+
+## 10.  Stateful Set
+
+场景：在有状态分部署存储应用中，Pod 的多副本有各自独立的 PVC 和 PV，pod 在新节点重建后需保证状态一致。
+
+### 10.2  保证状态一致
+
+- 一致的网络标识
+
+  sts 创建的 pod 名字后缀按顺序从 0 递增，通常通过 headless Service 暴露整个集群的 pod，每个 pod 有独立的 DNS 记录，pod 重建后保证名称和主机名一致。
+
+- 一致的存储
+
+  sts 有 pod 模板和 PVC 模板，每个 pod 会绑定到唯一的 PVC 和 PV，重建后新 pod 会绑定到旧 PVC 和 PV 复用旧的存储。
+
+### 10.3  使用 sts
+
+三种必需资源：PV（若没有默认的 provisioner，则须手动创建）、控制 Service、sts 自身
+
+- 创建 headless 
+
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: kubia
+  spec:
+    clusterIP: None
+    selector:
+      app: kubia
+    ports:
+      - port: 80
+        name: http
+  ```
+
+- 创建 sts：PVC 模板会在 pod 运行前创建，并且绑定到默认 storage class 的 provisioner 创建的 PV 上
+
+  ```yaml
+  apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: kubia
+  spec:
+    serviceName: kubia # 绑定到 kubia 的 headless service
+    replicas: 2
+    template:
+      metadata:
+        labels:
+          app: kubia
+      spec:
+        containers:
+          - name: kubia
+            image: yinzige/kubia-pet
+            ports:
+              - containerPort: 8080
+                name: http
+            volumeMounts:
+              - mountPath: /var/data # PVC 绑定到 pod 目录
+                name: data
+  
+    volumeClaimTemplates: # 动态 PVC 模板，运行时提前创建
+      - metadata:
+          name: data
+        spec:
+          resources:
+            requests:
+              storage: 1Mi
+          accessModes:
+            - ReadWriteOnce
+    selector:
+      matchLabels:
+        app: kubia
+  ```
+
+  注：sts 的创建或 scale 扩缩容，都是一次只操作一个 Pod 避免出现竞争、数据不一致的情况，pod 操作顺序与副本数顺序增减一致。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

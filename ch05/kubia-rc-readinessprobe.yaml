@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  selector:
+    app: kubia
+  template:
+    metadata:
+      labels:
+        app: kubia
+    spec:
+      containers:
+        - name: kubia-container
+          image: yinzige/kubia
+          readinessProbe:
+            exec:
+              command:
+                - ls
+                - /var/ready_now
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+

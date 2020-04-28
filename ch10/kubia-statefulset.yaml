@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kubia
+spec:
+  serviceName: kubia # 绑定到 kubia 的 headless service
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: kubia
+    spec:
+      containers:
+        - name: kubia
+          image: yinzige/kubia-pet
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - mountPath: /var/data
+              name: data
+
+  volumeClaimTemplates: # 动态 PVC 模板，运行时提前创建
+    - metadata:
+        name: data
+      spec:
+        resources:
+          requests:
+            storage: 1Mi
+        accessModes:
+          - ReadWriteOnce
+  selector:
+    matchLabels:
+      app: kubia
