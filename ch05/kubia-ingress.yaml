@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+    - host: "kubia.example.com"
+      http:
+        paths:
+          - path: /kubia
+            backend:
+              serviceName: kubia-nodeport
+              servicePort: 80
+          - path: /user
+            backend:
+              serviceName: user-svc
+              servicePort: 90
+    - host: "google.com"
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: gooele
+              servicePort: 8080

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune-env-from-configmap
+spec:
+  containers:
+    - name: fortune-env
+      image: yinzige/fortuneloop:env
+      env:
+        - name: INTERVAL2
+          valueFrom:
+            configMapKeyRef:
+              name: fortune-config-cm
+              key: INTERVAL
+      envFrom:
+        - prefix: CONF_
+          configMapRef:
+            name: fortune-config-cm

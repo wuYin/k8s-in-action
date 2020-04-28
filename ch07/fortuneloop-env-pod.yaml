@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune6s
+spec:
+  containers:
+    - name: html-generator
+      image: yinzige/fortuneloop:env
+      env:
+        - name: "INTERVAL"
+          value: "6"
+        - name: "NESTED_VAR"
+          value: "$(INTERVAL)_1"
+      volumeMounts:
+        - mountPath: /var/htdocs
+          name: html
+    - name: web-server
+      image: nginx:alpine
+      volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: html
+  volumes:
+    - name: html
+      emptyDir: {}

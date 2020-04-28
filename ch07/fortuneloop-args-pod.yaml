@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune5s
+spec:
+  containers:
+    - name: html-generator
+      image: yinzige/fortuneloop:args
+      args:
+        - "5"
+      volumeMounts:
+        - mountPath: /var/htdocs
+          name: html
+    - name: web-server
+      image: nginx:alpine
+      volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: html
+  volumes:
+    - name: html
+      emptyDir: {}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: private-it
+spec:
+  imagePullSecrets:
+    - name: dockerhub-secret
+  containers:
+    - name: main
+      image: yinzige/busybox:secret
+      command:
+        - ls
+      args:
+        - /

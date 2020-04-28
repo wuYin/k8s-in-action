@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune-configmap-volume
+spec:
+  containers:
+    - name: html-generator
+      image: yinzige/fortuneloop:env
+      env:
+        - name: INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              key: sleep-interval
+              name: fortune-config # cm name
+      volumeMounts:
+        - mountPath: /var/htdocs
+          name: html
+    - name: web-server
+      image: nginx:alpine
+      volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: html
+          readOnly: true
+        - mountPath: /etc/nginx/conf.d/gzip_in.conf
+          name: config
+          subPath: gzip.conf
+          readOnly: true
+      ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+  volumes:
+    - name: html
+      emptyDir: {}
+    - name: config
+      configMap:
+        name: fortune-config # cm name
+        defaultMode: 0666
+        items:
+          - key: my-nginx-config.conf
+            path: gzip.conf #
