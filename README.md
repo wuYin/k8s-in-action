@@ -1485,15 +1485,39 @@ kubia-b669c877-n7hnb     1/1     Running   0          2m4s    172.17.0.8    m01 
 
 
 
+## 11.  K8S 组件
+
+k8s 中各组件通过 API 服务器的 event 事件流的通知机制进行解耦，各组件之间不会直接通信，相互透明。[组件](https://asksendai.com/how-to-detect-kubernetes-vulnerability-cve-2019-11246-using-falco/)：
+
+![](https://mysieve-img.s3.amazonaws.com/pub/1564843777_2019_08_03_0dac5abc-584c-4be0-a63e-5eeaeca41452.png)
+
+- etcd：分布式一致性 KV 存储，只与 API Server 交互，存储集群各种资源元数据。
+- API Server：提供对集群资源的 CURD 接口，推送资源变更的事件流到监听端。
+- Scheduler：监听 Pod 创建事件，筛选出符合条件的节点并选出最优节点，更新 Pod 定义后发布给 API Server
+
+- 各种资源的 Controller：监听资源更新的事件流，检查副本数，同样更新元数据发布给 API Server
+- kubectl：注册 Node 等待分配 Pod，告知 Docker 拉取镜像运行容器，随后向 API Server 会报 Pod 状态及指标
+- kube-proxy：代理 Service 暴露的 IP 和 Port
+
+
+
+### 11.2  Pod 创建流程
+
+各控制器间通过 API Server 进行解耦：
+
+![](https://images.yinzige.com/chain.png)
+
+
+
+### 11.6  高可用
+
+API Server 和 etcd 可有多节点。
+
+为避免并发竞争，各控制器同一时间只能有一个实例运行，通过竞争写注解字段的方式进行选举，调度器同理。
 
 
 
 
 
-
-
-
-
-
-
+## 12.  API Server 安全
 
