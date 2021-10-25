@@ -115,7 +115,7 @@ spec: # ...
 ```
 
 ```shell
-# 基于 Lable 的增删改查操作
+# 基于 Label 的增删改查操作
 > kubectl get pods --show-labels # 显示 labels
 > kubectl get pods -L env # 只显示 env 标签
 > kubectl label pod kubia-manual env=debug # 为指定的 pod 资源添加新标签
